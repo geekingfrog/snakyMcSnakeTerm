@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Main where
 
@@ -39,6 +40,14 @@ import qualified System.Random as R
 import qualified Data.Foldable as F
 import Data.Maybe (fromMaybe)
 
+
+-- TODO put that in the state or a reader env
+boardW :: Int
+boardW = 40 :: Int
+boardH :: Int
+boardH = 20 :: Int
+
+
 data Direction = Up | Down | Left | Right deriving (Show, Eq)
 type Snake = Seq.Seq T.Location
 
@@ -47,7 +56,7 @@ data St = St
   , _direction :: Direction
   , _nextDirection :: Direction
   , _fruit :: T.Location
-  , _fruitLocations :: [Int]
+  , _fruitLocations :: ![Int]
   }
   deriving Show
 
@@ -96,14 +105,16 @@ main = do
 drawUi :: St -> [T.Widget WidgetName]
 drawUi st = drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
   where
-    board = centerLayer $ Border.border $ C.hLimit 40 $ C.vLimit 20 $ C.fill ' '
+    board = centerLayer $ Border.border $ C.hLimit boardW $ C.vLimit boardH $ C.fill ' '
 
 drawSnake :: St -> [T.Widget WidgetName]
-drawSnake st = toList $ fmap (\(T.Location (x, y)) -> C.translateBy (T.Location (x-20, y-10)) $ centerLayer $ C.str "#") (st^.snake)
--- drawSnake st = toList $ fmap (\loc -> C.translateBy (T.Location (-20, -10)) $ centerLayer $ C.translateBy loc $ C.str "#") (st^.snake)
+drawSnake st = toList $ fmap (\loc -> centerInBoard loc $ C.str "#") (st^.snake)
 
 drawFruit :: T.Location -> T.Widget WidgetName
-drawFruit (T.Location (x, y)) = C.translateBy (T.Location (x-20, y-10)) $ centerLayer $ C.str "O"
+drawFruit loc = centerInBoard loc $ C.str "O"
+
+centerInBoard :: T.Location -> Widget n -> Widget n
+centerInBoard (T.Location (x, y)) = C.translateBy (T.Location (x - boardW `div` 2, y - boardH `div` 2)) . centerLayer
 
 debug :: St -> T.Widget WidgetName
 debug st = C.padBottom T.Max $ C.str $ show (take 10 $ st ^. fruitLocations)
@@ -113,6 +124,8 @@ appEvent st (VtyEvent (V.EvKey V.KUp [])) = M.continue $ st & nextDirection %~ c
 appEvent st (VtyEvent (V.EvKey V.KDown [])) = M.continue $ st & nextDirection %~ changeDir Down (st ^. direction)
 appEvent st (VtyEvent (V.EvKey V.KLeft [])) = M.continue $ st & nextDirection %~ changeDir Left (st ^. direction)
 appEvent st (VtyEvent (V.EvKey V.KRight [])) = M.continue $ st & nextDirection %~ changeDir Right (st ^. direction)
+appEvent st (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt st
+appEvent st (VtyEvent (V.EvKey (V.KChar 'q') [])) = M.halt st
 appEvent st (VtyEvent (V.EvKey V.KEsc [])) = M.halt st
 appEvent st Tick =
   let
@@ -120,7 +133,7 @@ appEvent st Tick =
   in
     M.continue $ moveSnake newState
 
-appEvent st _ = M.continue st
+appEvent st ev = M.continue st
 
 instance Eq T.Location where
   (T.Location (x1, y1)) == (T.Location (x2, y2)) = x1 == x2 && y1 == y2
