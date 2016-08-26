@@ -22,7 +22,9 @@ import Brick.Widgets.Border
   , border
   )
 
-import Brick.Util (on, fg)
+import qualified Brick.Widgets.Dialog as D
+
+import Brick.Util (on, fg, bg)
 import Brick.AttrMap (attrMap, AttrMap)
 
 import qualified Brick.Widgets.Border as Border
@@ -30,6 +32,7 @@ import qualified Brick.Widgets.Border.Style as Border
 
 import Brick.Widgets.Center
   ( center
+  , hCenter
   , centerLayer
   )
 
@@ -52,6 +55,7 @@ boardH = 10 :: Int
 
 
 data Direction = Up | Down | Left | Right deriving (Show, Eq)
+data Choice = Restart | Quit deriving (Show)
 type Snake = Seq.Seq T.Location
 
 data St = St
@@ -60,8 +64,8 @@ data St = St
   , _nextDirection :: Direction
   , _fruit :: T.Location
   , _fruitLocations :: ![Int]
+  , _deathDialog :: D.Dialog Choice
   }
-  deriving Show
 
 makeLenses ''St
 
@@ -78,25 +82,27 @@ data SnakeEvent =
 
 main :: IO ()
 main = do
-  let globalDefault = V.white `on` V.black
-  let theMap = attrMap globalDefault [("crashed", V.red `on` V.black)]
+  let globalDefault = V.defAttr
+  let theMap = attrMap globalDefault [
+          ("crashed", V.red `on` V.black)
+        , (D.dialogAttr, V.white `on` V.blue)
+        , (D.buttonAttr, V.black `on` V.white)
+        , (D.buttonSelectedAttr, bg V.yellow)
+        ]
+
   let app = M.App { M.appDraw = drawUi
                   , M.appStartEvent = return
-                  , M.appHandleEvent = appEvent
+                  , M.appHandleEvent = withDialogEvent appEvent
                   , M.appAttrMap = const theMap
                   , M.appLiftVtyEvent = VtyEvent
                   , M.appChooseCursor = M.neverShowCursor
                   }
 
   stdGen <- R.getStdGen
-  let (x:y:locs) =  R.randomRs (1, 9) stdGen
-  let initialState = St {
-      _snake = Seq.fromList [T.Location (1, 1), T.Location (1, 2), T.Location (1, 3)]
-    , _direction = Right
-    , _nextDirection = Right
-    , _fruit = T.Location (x, y)
-    , _fruitLocations = locs
-    }
+  let locs =  R.randomRs (1, 9) stdGen
+  let choices = [ ("Restart", Restart) , ("Quit", Quit) ]
+  let deathD = D.dialog (Just "Game over") (Just (0, choices)) 50
+  let initialState = makeInitialState locs
 
   chan <- newChan
 
@@ -107,10 +113,34 @@ main = do
   void $ M.customMain (V.mkVty def) chan app initialState
 
 
+makeInitialState :: [Int] -> St
+makeInitialState locs =
+  let
+    (x:y:locs') = locs
+    choices = [ ("Restart", Restart) , ("Quit", Quit) ]
+    deathD = D.dialog (Just "Game over") (Just (0, choices)) 50
+    s0 = St
+      { _snake = Seq.fromList [T.Location (1, 1), T.Location (1, 2), T.Location (1, 3)]
+      , _direction = Right
+      , _nextDirection = Right
+      , _fruit = T.Location (x, y)
+      , _fruitLocations = locs'
+      , _deathDialog = deathD
+      }
+    (fruitPos, locs'') = newFruitPosition s0
+  in
+    s0 {_fruitLocations = locs'', _fruit = fruitPos}
+
+resetState :: St -> St
+resetState st = makeInitialState (st ^. fruitLocations)
+
 drawUi :: St -> [T.Widget WidgetName]
-drawUi st = drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
-  where
+drawUi st =
+  let
     board = centerLayer $ Border.border $ C.hLimit boardW $ C.vLimit boardH $ C.fill ' '
+    d = if hasCollision st then [D.renderDialog (st ^. deathDialog) C.emptyWidget] else []
+  in
+    d ++ drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
 
 drawSnake :: St -> [T.Widget WidgetName]
 drawSnake st =
@@ -147,6 +177,12 @@ appEvent st (VtyEvent (V.EvKey V.KRight [])) = M.continue $ st & nextDirection %
 appEvent st (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt st
 appEvent st (VtyEvent (V.EvKey (V.KChar 'q') [])) = M.halt st
 appEvent st (VtyEvent (V.EvKey V.KEsc [])) = M.halt st
+appEvent st (VtyEvent (V.EvKey V.KEnter [])) =
+  case D.dialogSelection (st ^. deathDialog) of
+    Nothing -> M.continue st
+    Just Restart -> M.continue (resetState st)
+    Just Quit -> M.halt st
+
 appEvent st Tick =
   if hasCollision st
     then M.continue st
@@ -208,7 +244,7 @@ collideWithWall st =
   let
     ((T.Location (x, y)) Seq.:< _) = Seq.viewl $ st ^. snake
   in
-    x < 0 || x > boardW || y <= 0 || y >= boardH
+    x < 0 || x > boardW || y <= 0 || y > boardH
 
 collideWithSnake :: T.Location -> Snake -> Bool
 collideWithSnake loc = F.any (== loc)
@@ -219,3 +255,17 @@ hasCollision st =
     (snHead Seq.:< snTail) = Seq.viewl (st ^. snake)
   in
     collideWithWall st || collideWithSnake snHead snTail
+
+
+withDialogEvent
+  :: (St -> SnakeEvent -> T.EventM WidgetName (T.Next St))
+  -> St
+  -> SnakeEvent
+  -> T.EventM WidgetName (T.Next St)
+withDialogEvent handle st ev = do
+  case ev of
+    Tick -> handle st ev
+    VtyEvent vtyEv -> do
+      let d = st ^. deathDialog
+      newDialog <- D.handleDialogEvent vtyEv d
+      handle (st & deathDialog .~ newDialog) ev
