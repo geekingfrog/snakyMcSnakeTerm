@@ -22,6 +22,9 @@ import Brick.Widgets.Border
   , border
   )
 
+import Brick.Util (on, fg)
+import Brick.AttrMap (attrMap, AttrMap)
+
 import qualified Brick.Widgets.Border as Border
 import qualified Brick.Widgets.Border.Style as Border
 
@@ -43,9 +46,9 @@ import Data.Maybe (fromMaybe)
 
 -- TODO put that in the state or a reader env
 boardW :: Int
-boardW = 40 :: Int
+boardW = 20 :: Int
 boardH :: Int
-boardH = 20 :: Int
+boardH = 10 :: Int
 
 
 data Direction = Up | Down | Left | Right deriving (Show, Eq)
@@ -75,10 +78,12 @@ data SnakeEvent =
 
 main :: IO ()
 main = do
+  let globalDefault = V.white `on` V.black
+  let theMap = attrMap globalDefault [("crashed", V.red `on` V.black)]
   let app = M.App { M.appDraw = drawUi
                   , M.appStartEvent = return
                   , M.appHandleEvent = appEvent
-                  , M.appAttrMap = const def
+                  , M.appAttrMap = const theMap
                   , M.appLiftVtyEvent = VtyEvent
                   , M.appChooseCursor = M.neverShowCursor
                   }
@@ -108,16 +113,31 @@ drawUi st = drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
     board = centerLayer $ Border.border $ C.hLimit boardW $ C.vLimit boardH $ C.fill ' '
 
 drawSnake :: St -> [T.Widget WidgetName]
-drawSnake st = toList $ fmap (\loc -> centerInBoard loc $ C.str "#") (st^.snake)
+drawSnake st =
+  let
+    (snHead Seq.:< snTail) = Seq.viewl $ st ^. snake
+    headCursor = centerInBoard snHead (C.str "o")
+    tailCursors = fmap (\l -> centerInBoard l $ C.str "#") (st ^. snake)
+    headAttr = if hasCollision st then "crashed" else ""
+  in
+    C.withAttr headAttr headCursor : toList tailCursors
 
 drawFruit :: T.Location -> T.Widget WidgetName
-drawFruit loc = centerInBoard loc $ C.str "O"
+drawFruit loc = centerInBoard loc $ C.str "@"
 
 centerInBoard :: T.Location -> Widget n -> Widget n
 centerInBoard (T.Location (x, y)) = C.translateBy (T.Location (x - boardW `div` 2, y - boardH `div` 2)) . centerLayer
 
 debug :: St -> T.Widget WidgetName
-debug st = C.padBottom T.Max $ C.str $ show (take 10 $ st ^. fruitLocations)
+debug st =
+  let
+    fruitPos = C.padBottom T.Max $ C.str $ show (take 10 $ st ^. fruitLocations)
+    wallCollided = collideWithWall st
+    (snHead Seq.:< snTail) = Seq.viewl (st ^. snake)
+    snakeCollision = collideWithSnake snHead snTail
+  in
+    fruitPos <+> (C.str $ show wallCollided) <+> (C.str $ show snakeCollision)
+    -- [fruitPos, wallCollided]
 
 appEvent :: St -> SnakeEvent -> T.EventM WidgetName (T.Next St)
 appEvent st (VtyEvent (V.EvKey V.KUp [])) = M.continue $ st & nextDirection %~ changeDir Up (st ^. direction)
@@ -128,10 +148,9 @@ appEvent st (VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt st
 appEvent st (VtyEvent (V.EvKey (V.KChar 'q') [])) = M.halt st
 appEvent st (VtyEvent (V.EvKey V.KEsc [])) = M.halt st
 appEvent st Tick =
-  let
-    newState = st & direction .~ (st ^. nextDirection)
-  in
-    M.continue $ moveSnake newState
+  if hasCollision st
+    then M.continue st
+    else M.continue (updateState st)
 
 appEvent st ev = M.continue st
 
@@ -149,18 +168,23 @@ changeDir newDir curDir nextDir =
   in
     fromMaybe nextDir (changeDir' newDir curDir)
 
-moveSnake :: St -> St
-moveSnake st =
+updateState :: St -> St
+updateState st =
   let
     -- snake is always at least 3 segment long
     (snTail Seq.:> _) = Seq.viewr $ st ^. snake
     (snHead Seq.:< _) = Seq.viewl $ st ^. snake
-    newHead = translateDir snHead (st ^. direction)
-    ateFruit = st ^. fruit == snHead
+    newHead = translateDir snHead (st ^. nextDirection)
+    ateFruit = st ^. fruit == newHead
     newSnake = (Seq.<|) newHead (if ateFruit then st ^. snake else snTail)
     (newFruit, futureLocs) = if ateFruit then newFruitPosition st else (st ^. fruit, st ^. fruitLocations)
   in
-    st {_snake = newSnake, _fruit = newFruit, _fruitLocations = futureLocs}
+    st
+      { _snake = newSnake
+      , _fruit = newFruit
+      , _fruitLocations = futureLocs
+      , _direction = st ^. nextDirection
+      }
 
 translateDir :: T.Location -> Direction -> T.Location
 translateDir (T.Location (x, y)) dir
@@ -174,8 +198,24 @@ newFruitPosition st =
   let
     newX : newY : locs = st ^. fruitLocations
     newLoc = T.Location (newX, newY)
-    hasCollision = F.any (== newLoc) (st ^. snake)
   in
-    if hasCollision
+    if collideWithSnake newLoc (st ^. snake)
        then newFruitPosition $ st {_fruitLocations = newY:locs}
        else (newLoc, locs)
+
+collideWithWall :: St -> Bool
+collideWithWall st =
+  let
+    ((T.Location (x, y)) Seq.:< _) = Seq.viewl $ st ^. snake
+  in
+    x < 0 || x > boardW || y <= 0 || y >= boardH
+
+collideWithSnake :: T.Location -> Snake -> Bool
+collideWithSnake loc = F.any (== loc)
+
+hasCollision :: St -> Bool
+hasCollision st =
+  let
+    (snHead Seq.:< snTail) = Seq.viewl (st ^. snake)
+  in
+    collideWithWall st || collideWithSnake snHead snTail
