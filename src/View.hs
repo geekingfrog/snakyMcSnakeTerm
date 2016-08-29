@@ -41,7 +41,7 @@ drawUi st =
     dialogBody = C.vBox [C.padAll 1 $ hCenter $ C.str "(<tab> / <S-tab> to select)"]
     d = [D.renderDialog (st ^. deathDialog) dialogBody | hasCollision st]
   in
-    d ++ drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
+    d ++ drawSnake st ++ [drawFruit (st ^. fruit), board]
 
 
 drawSnake :: St -> [BT.Widget WidgetName]
