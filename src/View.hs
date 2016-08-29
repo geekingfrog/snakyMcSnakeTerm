@@ -18,7 +18,7 @@ import qualified Brick.Widgets.Core as C
 import qualified Brick.Widgets.Border.Style as BS
 import qualified Brick.Widgets.Border as Border
 import qualified Brick.Types as BT
-import Brick.Widgets.Center (centerLayer)
+import Brick.Widgets.Center (centerLayer, hCenter)
 
 import Constants (boardW, boardH)
 import Types
@@ -38,7 +38,8 @@ drawUi st =
   let
     board = centerLayer $ C.withBorderStyle BS.unicodeBold $
       Border.border $ C.hLimit boardW $ C.vLimit boardH $ C.fill ' '
-    d = [D.renderDialog (st ^. deathDialog) C.emptyWidget | hasCollision st]
+    dialogBody = C.vBox [C.padAll 1 $ hCenter $ C.str "(<tab> / <S-tab> to select)"]
+    d = [D.renderDialog (st ^. deathDialog) dialogBody | hasCollision st]
   in
     d ++ drawSnake st ++ [drawFruit (st ^. fruit), board, debug st]
 

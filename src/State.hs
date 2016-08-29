@@ -74,6 +74,7 @@ appHandleEvent' st Tick =
     then Brick.continue st
     else Brick.continue (updateState st)
 
+appHandleEvent' st _ = Brick.continue st
 
 updateState :: St -> St
 updateState st =
