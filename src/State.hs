@@ -25,11 +25,6 @@ import Types as T
 import Constants (boardW, boardH)
 
 
--- orphan instance, get git version of brick where this is fixed
-instance Eq Location where
-  (Location (x1, y1)) == (Location (x2, y2)) = x1 == x2 && y1 == y2
-
-
 makeInitialState :: [Int] -> St
 makeInitialState locs =
   let

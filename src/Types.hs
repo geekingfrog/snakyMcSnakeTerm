@@ -27,7 +27,7 @@ data WidgetName =
     BoardW
   | SnakeW
   | ViewportBoard
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 data SnakeEvent =
     VtyEvent V.Event
